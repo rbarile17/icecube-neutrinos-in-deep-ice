@@ -32,7 +32,6 @@ def main():
     valid_loader = DataLoader(
         valid_set,
         batch_size=1,
-        num_workers=1,
         collate_fn=collate_fn,
     )
 
@@ -42,13 +41,6 @@ def main():
         accelerator='gpu',
         devices=1,
         max_steps=num_total_step,
-        log_every_n_steps=10,
-        val_check_interval=10_000,
-        gradient_clip_val=1.0,
-        callbacks=[
-            pl.callbacks.LearningRateMonitor(logging_interval='step'),
-            pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
-        ],
     )
 
     # Verify with offical pretrained weight
