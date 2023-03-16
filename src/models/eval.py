@@ -28,7 +28,7 @@ def main():
     log_dir = Path('log') / Path(__file__).stem
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    valid_set = IceCube(parquet_dir, meta_dir, [51], batch_size=100)
+    valid_set = IceCube([51], batch_size=100)
     valid_loader = DataLoader(
         valid_set,
         batch_size=1,

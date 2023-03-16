@@ -1,29 +1,24 @@
 import gc
 import random
 import pandas as pd
-from pathlib import Path
 
 import torch
 
 from torch.utils.data import IterableDataset
 from torch_geometric.data import Data, Batch
 
-from .paths import RAW_DATA_PATH
+from .paths import RAW_DATA_PATH, RAW_TRAIN_BATCHES_PATH, RAW_META_PATH
 from ..utils import angle_to_xyz
 
 
 class IceCube(IterableDataset):
     def __init__(
         self,
-        parquet_dir,
-        meta_dir,
         chunk_ids,
         batch_size=200,
         max_pulses=200,
         shuffle=False,
     ):
-        self.parquet_dir = parquet_dir
-        self.meta_dir = meta_dir
         self.chunk_ids = chunk_ids
         self.batch_size = batch_size
         self.max_pulses = max_pulses
@@ -52,9 +47,9 @@ class IceCube(IterableDataset):
 
         # Read each chunk and meta iteratively into memory and build mini-batch
         for c, chunk_id in enumerate(chunk_ids):
-            data = pd.read_parquet(self.parquet_dir / f'batch_{chunk_id}.parquet')
+            data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{chunk_id}.parquet')
 
-            meta = pd.read_parquet(self.meta_dir / f'meta_{chunk_id}.parquet')
+            meta = pd.read_parquet(RAW_META_PATH/ f'meta_{chunk_id}.parquet')
             angles = meta[['azimuth', 'zenith']].values
             angles = torch.from_numpy(angles).float()
             xyzs = angle_to_xyz(angles)
