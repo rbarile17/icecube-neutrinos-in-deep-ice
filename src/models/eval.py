@@ -1,7 +1,9 @@
-import torch
-import pytorch_lightning as pl
+"""Evaluate the model on the validation set."""
 
 from pathlib import Path
+
+import torch
+import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
 
@@ -11,6 +13,7 @@ from ..data import IceCube
 
 
 def main():
+    """Main function."""
     pl.seed_everything(123)
     torch.set_float32_matmul_precision('medium')
 
@@ -45,16 +48,16 @@ def main():
 
     # Verify with offical pretrained weight
     weights = torch.load('./models/state_dict.pth')
-    new_weights = dict()
-    for k, v in weights.items():
-        k = k.replace('_gnn._conv_layers.0', 'conv0')
-        k = k.replace('_gnn._conv_layers.1', 'conv1')
-        k = k.replace('_gnn._conv_layers.2', 'conv2')
-        k = k.replace('_gnn._conv_layers.3', 'conv3')
-        k = k.replace('_gnn._post_processing', 'post')
-        k = k.replace('_gnn._readout', 'readout')
-        k = k.replace('_tasks.0._affine', 'pred')
-        new_weights[k] = v
+    new_weights = {}
+    for key, value in weights.items():
+        key = key.replace('_gnn._conv_layers.0', 'conv0')
+        key = key.replace('_gnn._conv_layers.1', 'conv1')
+        key = key.replace('_gnn._conv_layers.2', 'conv2')
+        key = key.replace('_gnn._conv_layers.3', 'conv3')
+        key = key.replace('_gnn._post_processing', 'post')
+        key = key.replace('_gnn._readout', 'readout')
+        key = key.replace('_tasks.0._affine', 'pred')
+        new_weights[key] = value
     print(model.load_state_dict(new_weights))
     print(trainer.validate(model, valid_loader))
 

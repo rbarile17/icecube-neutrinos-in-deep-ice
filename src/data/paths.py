@@ -1,3 +1,5 @@
+"""Paths to data directories and files."""
+
 from pathlib import Path
 
 DATA_PATH = Path('data')

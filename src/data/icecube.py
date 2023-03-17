@@ -1,3 +1,5 @@
+"""IceCube dataset."""
+
 import gc
 import random
 import pandas as pd
@@ -12,6 +14,7 @@ from ..utils import angle_to_xyz
 
 
 class IceCube(IterableDataset):
+    """IceCube dataset."""
     def __init__(
         self,
         chunk_ids,
@@ -27,10 +30,11 @@ class IceCube(IterableDataset):
         if self.shuffle:
             random.shuffle(self.chunk_ids)
 
-    def __iter__(self):
-        # Handle num_workers > 1 and multi-gpu
+    def handle_distributed(self):
+        """Handle num_workers > 1 and multi-gpu."""
         is_dist = torch.distributed.is_initialized()
-        world_size = torch.distributed.get_world_size() if is_dist else 1
+        world_size = torch.distributed.get_world_size() \
+            if torch.distributed.is_initialized() else 1
         rank_id = torch.distributed.get_rank() if is_dist else 0
 
         info = torch.utils.data.get_worker_info()
@@ -39,6 +43,11 @@ class IceCube(IterableDataset):
 
         num_replica = world_size * num_worker
         offset = rank_id * num_worker + worker_id
+
+        return offset, num_replica
+
+    def __iter__(self):
+        offset, num_replica = self.handle_distributed()
         chunk_ids = self.chunk_ids[offset::num_replica]
 
         # Sensor data
@@ -46,46 +55,49 @@ class IceCube(IterableDataset):
         sensor_xyz = torch.from_numpy(sensor_xyz.values).float()
 
         # Read each chunk and meta iteratively into memory and build mini-batch
-        for c, chunk_id in enumerate(chunk_ids):
+        for _, chunk_id in enumerate(chunk_ids):
             data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{chunk_id}.parquet')
-
             meta = pd.read_parquet(RAW_META_PATH/ f'meta_{chunk_id}.parquet')
-            angles = meta[['azimuth', 'zenith']].values
-            angles = torch.from_numpy(angles).float()
-            xyzs = angle_to_xyz(angles)
-            meta = {eid: xyz for eid, xyz in zip(meta['event_id'].tolist(), xyzs)}
 
-            # Take all eventi_ids and split them into batches
-            eids = list(meta.keys())
+            meta = dict(zip(
+                meta['event_id'].tolist(),
+                angle_to_xyz(torch.from_numpy(meta[['azimuth', 'zenith']].values).float())))
+
+            # Take all event_ids and split them into batches
+            event_ids = list(meta.keys())
             if self.shuffle:
-                random.shuffle(eids)
-            eids_batches = [
-                eids[i : i + self.batch_size]
-                for i in range(0, len(eids), self.batch_size)
+                random.shuffle(event_ids)
+            event_ids = [
+                event_ids[i : i + self.batch_size]
+                for i in range(0, len(event_ids), self.batch_size)
             ]
 
-            for batch_eids in eids_batches:
+            for event_ids_batch in event_ids:
                 batch = []
 
                 # For each sample, extract features
-                for eid in batch_eids:
-                    df = data.loc[eid]
-                    if len(df) > self.max_pulses:
-                        df = df.sample(n=self.max_pulses)
-                    df = df.sort_values(['time'])
-                    t = torch.from_numpy(df['time'].values).float()
-                    c = torch.from_numpy(df['charge'].values).float()
-                    s = torch.from_numpy(df['sensor_id'].values).long()
-                    p = sensor_xyz[s]
-                    a = torch.from_numpy(df['auxiliary'].values).float()
-                    feat = torch.stack([p[:, 0], p[:, 1], p[:, 2], t, c, a], dim=1)
+                for event_id in event_ids_batch:
+                    event_df = data.loc[event_id]
+
+                    if len(event_df) > self.max_pulses:
+                        event_df = event_df.sample(n=self.max_pulses)
+
+                    event_df = event_df.sort_values(['time'])
+                    sensor = torch.from_numpy(event_df['sensor_id'].values).long()
+                    feat = torch.stack([
+                        sensor_xyz[sensor][:, 0],
+                        sensor_xyz[sensor][:, 1],
+                        sensor_xyz[sensor][:, 2],
+                        torch.from_numpy(event_df['time'].values).float(),
+                        torch.from_numpy(event_df['charge'].values).float(),
+                        torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
 
                     batch.append(
                         Data(
                             x=feat,
-                            gt=meta[eid],
+                            gt=meta[event_id],
                             n_pulses=len(feat),
-                            eid=torch.tensor([eid]).long(),
+                            eid=torch.tensor([event_id]).long(),
                         )
                     )
 
@@ -94,3 +106,6 @@ class IceCube(IterableDataset):
             del data
             del meta
             gc.collect()
+
+    def __getitem__(self, idx):
+        raise NotImplementedError

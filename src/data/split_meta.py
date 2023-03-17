@@ -1,3 +1,4 @@
+"""Split the meta data into batches."""
 import pyarrow
 import pyarrow.parquet
 
@@ -5,9 +6,9 @@ import pandas as pd
 
 from tqdm import tqdm
 
-from .paths import RAW_DATA_PATH, PROCESSED_META_PATH
+from .paths import RAW_DATA_PATH, RAW_META_PATH
 
-out_dir = PROCESSED_META_PATH
+out_dir = RAW_META_PATH
 out_dir.mkdir(parents=True, exist_ok=True)
 
 meta = pyarrow.parquet.read_table(RAW_DATA_PATH / 'train_meta.parquet')

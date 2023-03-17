@@ -1,18 +1,20 @@
+"""Implementation of DynEdge model."""
+
 import torch
 from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import IterableDataset, DataLoader
 
 import pytorch_lightning as pl
 from torch_geometric.nn import knn_graph, EdgeConv
 from torch_geometric.utils import homophily
-from torch_geometric.data import Data, Batch
-from torch_scatter import scatter_add, scatter_mean, scatter_max, scatter_min
+from torch_geometric.data import Batch
+from torch_scatter import scatter_mean, scatter_max, scatter_min
 
-from ..utils import angle_to_xyz, xyz_to_angle
-from ..utils import VonMisesFisher3DLoss, angular_error
+from ..utils import VonMisesFisher3DLoss
+from ..utils import angular_error
+
 
 class MLP(nn.Sequential):
+    """Implementation of a simple MLP."""
     def __init__(self, feats):
         layers = []
         for i in range(1, len(feats)):
@@ -22,6 +24,9 @@ class MLP(nn.Sequential):
 
 
 class DynEdge(pl.LightningModule):
+    """Implementation of DynEdge model."""
+
+    # pylint: disable=unused-argument
     def __init__(
         self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
     ):
@@ -35,9 +40,10 @@ class DynEdge(pl.LightningModule):
         self.readout = MLP([768, 128])
         self.pred = nn.Linear(128, 3)
 
+    # pylint: disable=arguments-differ
     def forward(self, data: Batch):
+        """Forward pass of the model."""
         vert_feat = data.x
-        batch = data.batch
 
         vert_feat[:, 0] /= 500.0  # x
         vert_feat[:, 1] /= 500.0  # y
@@ -45,19 +51,20 @@ class DynEdge(pl.LightningModule):
         vert_feat[:, 3] = (vert_feat[:, 3] - 1.0e04) / 3.0e4  # time
         vert_feat[:, 4] = torch.log10(vert_feat[:, 4]) / 3.0  # charge
 
-        edge_index = knn_graph(vert_feat[:, :3], 8, batch)
+        edge_index = knn_graph(vert_feat[:, :3], 8, data.batch)
 
         # Construct global features
-        hx = homophily(edge_index, vert_feat[:, 0], batch).reshape(-1, 1)
-        hy = homophily(edge_index, vert_feat[:, 1], batch).reshape(-1, 1)
-        hz = homophily(edge_index, vert_feat[:, 2], batch).reshape(-1, 1)
-        ht = homophily(edge_index, vert_feat[:, 3], batch).reshape(-1, 1)
-        means = scatter_mean(vert_feat, batch, dim=0)
-        n_p = torch.log10(data.n_pulses).reshape(-1, 1)
-        global_feats = torch.cat([means, hx, hy, hz, ht, n_p], dim=1)  # [B, 11]
+        global_feats = torch.cat([
+            scatter_mean(vert_feat, data.batch, dim=0),
+            homophily(edge_index, vert_feat[:, 0], data.batch).reshape(-1, 1),
+            homophily(edge_index, vert_feat[:, 1], data.batch).reshape(-1, 1),
+            homophily(edge_index, vert_feat[:, 2], data.batch).reshape(-1, 1),
+            homophily(edge_index, vert_feat[:, 3], data.batch).reshape(-1, 1),
+            torch.log10(data.n_pulses).reshape(-1, 1)
+        ], dim=1)  # [B, 11]
 
         # Distribute global_feats to each vertex
-        _, cnts = torch.unique_consecutive(batch, return_counts=True)
+        _, cnts = torch.unique_consecutive(data.batch, return_counts=True)
         global_feats = torch.repeat_interleave(global_feats, cnts, dim=0)
         vert_feat = torch.cat((vert_feat, global_feats), dim=1)
 
@@ -67,15 +74,15 @@ class DynEdge(pl.LightningModule):
         vert_feat = self.conv0(vert_feat, edge_index)
         feats.append(vert_feat)
         # Conv 1
-        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=batch)
+        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=data.batch)
         vert_feat = self.conv1(vert_feat, edge_index)
         feats.append(vert_feat)
         # Conv 2
-        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=batch)
+        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=data.batch)
         vert_feat = self.conv2(vert_feat, edge_index)
         feats.append(vert_feat)
         # Conv 3
-        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=batch)
+        edge_index = knn_graph(vert_feat[:, :3], k=8, batch=data.batch)
         vert_feat = self.conv3(vert_feat, edge_index)
         feats.append(vert_feat)
 
@@ -86,9 +93,9 @@ class DynEdge(pl.LightningModule):
         # Readout
         readout_inp = torch.cat(
             [
-                scatter_min(post_out, batch, dim=0)[0],
-                scatter_max(post_out, batch, dim=0)[0],
-                scatter_mean(post_out, batch, dim=0),
+                scatter_min(post_out, data.batch, dim=0)[0],
+                scatter_max(post_out, data.batch, dim=0)[0],
+                scatter_mean(post_out, data.batch, dim=0),
             ],
             dim=1,
         )
@@ -97,14 +104,18 @@ class DynEdge(pl.LightningModule):
         # Predict
         pred = self.pred(readout_out)
         kappa = pred.norm(dim=1, p=2) + 1e-8
-        pred_x = pred[:, 0] / kappa
-        pred_y = pred[:, 1] / kappa
-        pred_z = pred[:, 2] / kappa
-        pred = torch.stack([pred_x, pred_y, pred_z, kappa], dim=1)
+
+        pred = torch.stack([
+            pred[:, 0] / kappa,
+            pred[:, 1] / kappa,
+            pred[:, 2] / kappa,
+            kappa
+        ], dim=1)
 
         return pred
 
     def train_or_valid_step(self, data, prefix):
+        """Training and validation step."""
         pred_xyzk = self.forward(data)  # [B, 4]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
         loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
@@ -142,5 +153,6 @@ class DynEdge(pl.LightningModule):
         }
 
 
-def collate_fn(x):
-    return x[0]
+def collate_fn(data):
+    """Collate function for PyTorch DataLoader."""
+    return data[0]

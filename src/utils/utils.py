@@ -1,3 +1,5 @@
+"""Utility functions and classes."""
+
 import torch
 from torch import nn
 from torch import Tensor
@@ -6,21 +8,25 @@ import scipy
 
 
 def angle_to_xyz(angles_b):
-    az, zen = angles_b.t()
-    x = torch.cos(az) * torch.sin(zen)
-    y = torch.sin(az) * torch.sin(zen)
-    z = torch.cos(zen)
-    return torch.stack([x, y, z], dim=1)
+    """Converts azimuth and zenith angles to cartesian coordinates."""
+    azimuth, zenith = angles_b.t()
+
+    return torch.stack([
+        torch.cos(azimuth) * torch.sin(zenith),
+        torch.sin(azimuth) * torch.sin(zenith),
+        torch.cos(zenith)], dim=1)
 
 
 def xyz_to_angle(xyz_b):
-    x, y, z = xyz_b.t()
-    az = torch.arccos(x / torch.sqrt(x**2 + y**2)) * torch.sign(y)
-    zen = torch.arccos(z / torch.sqrt(x**2 + y**2 + z**2))
-    return torch.stack([az, zen], dim=1)
+    """Converts cartesian coordinates to azimuth and zenith angles."""
+    dom_x, dom_y, dom_z = xyz_b.t()
+    azimuth = torch.arccos(dom_x / torch.sqrt(dom_x**2 + dom_y**2)) * torch.sign(dom_y)
+    zenith = torch.arccos(dom_z / torch.sqrt(dom_x**2 + dom_y**2 + dom_z**2))
+    return torch.stack([azimuth, zenith], dim=1)
 
 
 def angular_error(xyz_pred_b, xyz_true_b):
+    """Calculates angular error between two sets of vectors."""
     return torch.arccos(torch.sum(xyz_pred_b * xyz_true_b, dim=1))
 
 
@@ -56,16 +62,15 @@ class LogCMK(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, m, kappa):  # pylint: disable=invalid-name,arguments-differ
+    # pylint: disable=invalid-name,arguments-differ
+    def forward(ctx, m, kappa):
         """Forward pass."""
         dtype = kappa.dtype
         ctx.save_for_backward(kappa)
         ctx.m = m
         ctx.dtype = dtype
         kappa = kappa.double()
-        iv = torch.from_numpy(scipy.special.iv(m / 2.0 - 1, kappa.cpu().numpy())).to(
-            kappa.device
-        )
+        iv = torch.from_numpy(scipy.special.iv(m / 2.0 - 1, kappa.cpu().numpy())).to(kappa.device)
         return (
             (m / 2.0 - 1) * torch.log(kappa)
             - torch.log(iv)
@@ -73,7 +78,8 @@ class LogCMK(torch.autograd.Function):
         ).type(dtype)
 
     @staticmethod
-    def backward(ctx, grad_output):  # pylint: disable=invalid-name,arguments-differ
+    # pylint: disable=invalid-name,arguments-differ
+    def backward(ctx, grad_output):
         """Backward pass."""
         kappa = ctx.saved_tensors[0]
         m = ctx.m
@@ -87,6 +93,16 @@ class LogCMK(torch.autograd.Function):
             grad_output * torch.from_numpy(grads).to(grad_output.device).type(dtype),
         )
 
+    @staticmethod
+    # pylint: disable=arguments-differ
+    def jvp(ctx):
+        """See base class."""
+        raise NotImplementedError
+
+    def vjp(self):
+        """See base class."""
+        raise NotImplementedError
+
 
 class VonMisesFisher3DLoss(nn.Module):
     """General class for calculating von Mises-Fisher loss.
@@ -96,16 +112,18 @@ class VonMisesFisher3DLoss(nn.Module):
     """
 
     @classmethod
+    # pylint: disable=invalid-name
     def log_cmk_exact(
         cls, m: int, kappa: Tensor
-    ) -> Tensor:  # pylint: disable=invalid-name
+    ) -> Tensor:
         """Calculate $log C_{m}(k)$ term in von Mises-Fisher loss exactly."""
         return LogCMK.apply(m, kappa)
 
     @classmethod
+    # pylint: disable=invalid-name
     def log_cmk_approx(
         cls, m: int, kappa: Tensor
-    ) -> Tensor:  # pylint: disable=invalid-name
+    ) -> Tensor:
         """Calculate $log C_{m}(k)$ term in von Mises-Fisher loss approx.
 
         [https://arxiv.org/abs/1812.04616] Sec. 8.2 with additional minus sign.
@@ -116,9 +134,10 @@ class VonMisesFisher3DLoss(nn.Module):
         return -a + b * torch.log(b + a)
 
     @classmethod
+    # pylint: disable=invalid-name
     def log_cmk(
         cls, m: int, kappa: Tensor, kappa_switch: float = 100.0
-    ) -> Tensor:  # pylint: disable=invalid-name
+    ) -> Tensor:
         """Calculate $log C_{m}(k)$ term in von Mises-Fisher loss.
 
         Since `log_cmk_exact` is diverges for `kappa` >~ 700 (using float64
@@ -137,6 +156,7 @@ class VonMisesFisher3DLoss(nn.Module):
         ret[mask_exact] = cls.log_cmk_exact(m, kappa[mask_exact])
         return ret
 
+    # pylint: disable=invalid-name
     def _evaluate(self, prediction: Tensor, target: Tensor) -> Tensor:
         """Calculate von Mises-Fisher loss for a vector in D dimensons.
 
