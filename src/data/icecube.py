@@ -17,18 +17,18 @@ class IceCube(IterableDataset):
     """IceCube dataset."""
     def __init__(
         self,
-        chunk_ids,
+        batch_ids,
         batch_size=200,
         max_pulses=200,
         shuffle=False,
     ):
-        self.chunk_ids = chunk_ids
+        self.batch_ids = batch_ids
         self.batch_size = batch_size
         self.max_pulses = max_pulses
         self.shuffle = shuffle
 
         if self.shuffle:
-            random.shuffle(self.chunk_ids)
+            random.shuffle(self.batch_ids)
 
     def handle_distributed(self):
         """Handle num_workers > 1 and multi-gpu."""
@@ -48,16 +48,16 @@ class IceCube(IterableDataset):
 
     def __iter__(self):
         offset, num_replica = self.handle_distributed()
-        chunk_ids = self.chunk_ids[offset::num_replica]
+        batch_ids = self.batch_ids[offset::num_replica]
 
         # Sensor data
         sensor_xyz = pd.read_csv(RAW_DATA_PATH / 'sensor_geometry.csv')[['x', 'y', 'z']]
         sensor_xyz = torch.from_numpy(sensor_xyz.values).float()
 
-        # Read each chunk and meta iteratively into memory and build mini-batch
-        for _, chunk_id in enumerate(chunk_ids):
-            data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{chunk_id}.parquet')
-            meta = pd.read_parquet(RAW_META_PATH/ f'meta_{chunk_id}.parquet')
+        # Read each batch and meta iteratively into memory and build mini-batch
+        for _, batch_id in enumerate(batch_ids):
+            data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{batch_id}.parquet')
+            meta = pd.read_parquet(RAW_META_PATH/ f'meta_{batch_id}.parquet')
 
             meta = dict(zip(
                 meta['event_id'].tolist(),
