@@ -6,3 +6,4 @@ pip install ipykernel ipython nbformat tabulate
 pip install matplotlib plotly
 pip install pandas pyarrow
 pip install dask dask-ml
+pip install pytest
