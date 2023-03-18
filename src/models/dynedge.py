@@ -114,21 +114,23 @@ class DynEdge(pl.LightningModule):
 
         return pred
 
-    def train_or_valid_step(self, data, prefix):
+    def train_or_valid_step(self, data, prefix, log=True):
         """Training and validation step."""
         pred_xyzk = self.forward(data)  # [B, 4]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
         loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
         error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
-        self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
-        self.log(f'error/{prefix}', error, batch_size=len(true_xyz))
+
+        if log:
+            self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
+            self.log(f'error/{prefix}', error, batch_size=len(true_xyz))
         return loss
 
-    def training_step(self, data, _):
-        return self.train_or_valid_step(data, 'train')
+    def training_step(self, data, _, log=True):
+        return self.train_or_valid_step(data, 'train', log)
 
-    def validation_step(self, data, _):
-        self.train_or_valid_step(data, 'valid')
+    def validation_step(self, data, _, log=True):
+        self.train_or_valid_step(data, 'valid', log)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.max_lr)
