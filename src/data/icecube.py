@@ -64,9 +64,7 @@ class IceCube(IterableDataset):
                 angle_to_xyz(torch.from_numpy(meta[['azimuth', 'zenith']].values).float())))
 
             # Take all event_ids and split them into batches
-            event_ids = list(meta.keys())
-            if self.shuffle:
-                random.shuffle(event_ids)
+            event_ids = random.shuffle(list(meta.keys())) if self.shuffle else list(meta.keys())
             event_ids = [
                 event_ids[i : i + self.batch_size]
                 for i in range(0, len(event_ids), self.batch_size)
