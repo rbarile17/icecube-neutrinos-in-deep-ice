@@ -25,9 +25,7 @@ def main():
     # Config
     num_total_step = 100_000
     num_warmup_step = 1_000
-    parquet_dir = Path('data/raw/train')
-    meta_dir = Path('data/raw/meta')
-    assert parquet_dir.exists() and meta_dir.exists()
+
     log_dir = Path('log') / Path(__file__).stem
     log_dir.mkdir(parents=True, exist_ok=True)
 
