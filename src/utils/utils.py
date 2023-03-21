@@ -99,10 +99,6 @@ class LogCMK(torch.autograd.Function):
         """See base class."""
         raise NotImplementedError
 
-    def vjp(self):
-        """See base class."""
-        raise NotImplementedError
-
 
 class VonMisesFisher3DLoss(nn.Module):
     """General class for calculating von Mises-Fisher loss.
