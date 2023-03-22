@@ -46,6 +46,39 @@ class IceCube(IterableDataset):
 
         return offset, num_replica
 
+
+    def build_batch(self, data, meta, sensor_xyz, event_ids_batch):
+        batch = []
+
+        # For each sample, extract features
+        for event_id in event_ids_batch:
+            event_df = data.loc[event_id]
+
+            if len(event_df) > self.max_pulses:
+                event_df = event_df.sample(n=self.max_pulses)
+
+            event_df = event_df.sort_values(['time'])
+            sensor = torch.from_numpy(event_df['sensor_id'].values).long()
+            feat = torch.stack([
+                sensor_xyz[sensor][:, 0],
+                sensor_xyz[sensor][:, 1],
+                sensor_xyz[sensor][:, 2],
+                torch.from_numpy(event_df['time'].values).float(),
+                torch.from_numpy(event_df['charge'].values).float(),
+                torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
+
+            batch.append(
+                Data(
+                    x=feat,
+                    gt=meta[event_id],
+                    n_pulses=len(feat),
+                    eid=torch.tensor([event_id]).long(),
+                )
+            )
+
+        return batch
+            
+
     def __iter__(self):
         offset, num_replica = self.handle_distributed()
         batch_ids = self.batch_ids[offset::num_replica]
@@ -73,34 +106,7 @@ class IceCube(IterableDataset):
             ]
 
             for event_ids_batch in event_ids:
-                batch = []
-
-                # For each sample, extract features
-                for event_id in event_ids_batch:
-                    event_df = data.loc[event_id]
-
-                    if len(event_df) > self.max_pulses:
-                        event_df = event_df.sample(n=self.max_pulses)
-
-                    event_df = event_df.sort_values(['time'])
-                    sensor = torch.from_numpy(event_df['sensor_id'].values).long()
-                    feat = torch.stack([
-                        sensor_xyz[sensor][:, 0],
-                        sensor_xyz[sensor][:, 1],
-                        sensor_xyz[sensor][:, 2],
-                        torch.from_numpy(event_df['time'].values).float(),
-                        torch.from_numpy(event_df['charge'].values).float(),
-                        torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
-
-                    batch.append(
-                        Data(
-                            x=feat,
-                            gt=meta[event_id],
-                            n_pulses=len(feat),
-                            eid=torch.tensor([event_id]).long(),
-                        )
-                    )
-
+                batch = self.build_batch(data, meta, sensor_xyz, event_ids_batch)
                 yield Batch.from_data_list(batch)
 
             del data
