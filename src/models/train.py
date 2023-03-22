@@ -45,6 +45,7 @@ def main():
         callbacks=[
             pl.callbacks.LearningRateMonitor(logging_interval='step'),
             pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
+            pl.callbacks.RichProgressBar()
         ],
     )
     trainer.fit(model, train_loader)
