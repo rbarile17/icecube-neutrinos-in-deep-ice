@@ -41,6 +41,7 @@ def main():
         accelerator='gpu',
         devices=1,
         max_epochs=30,
+        accumulate_grad_batches=4,
         callbacks=[
             pl.callbacks.LearningRateMonitor(logging_interval='step'),
             pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
