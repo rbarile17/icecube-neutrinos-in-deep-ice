@@ -32,6 +32,9 @@ class DynEdge(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        self.lstm = nn.LSTM(6, 32, 4)
+
         self.conv0 = EdgeConv(MLP([34, 128, 256]), aggr='add')
         self.conv1 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv2 = EdgeConv(MLP([512, 336, 256]), aggr='add')
@@ -50,6 +53,8 @@ class DynEdge(pl.LightningModule):
         vert_feat[:, 2] /= 500.0  # z
         vert_feat[:, 3] = (vert_feat[:, 3] - 1.0e04) / 3.0e4  # time
         vert_feat[:, 4] = torch.log10(vert_feat[:, 4]) / 3.0  # charge
+
+        lstm_out = self.lstm(vert_feat)[0]
 
         edge_index = knn_graph(vert_feat[:, :3], 8, data.batch)
 
