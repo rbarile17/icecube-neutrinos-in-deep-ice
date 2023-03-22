@@ -29,26 +29,26 @@ def main():
     log_dir = Path('log') / Path(__file__).stem
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    train_set = IceCube(list(range(1, 51)), batch_size=100, shuffle=True)
-    train_loader = DataLoader(
-        train_set,
-        batch_size=1,
-        collate_fn=collate_fn,
-    )
+    train_set = IceCube(list(range(1, 51)), batch_size=256, shuffle=True)
+    train_loader = DataLoader(train_set, batch_size=1, collate_fn=collate_fn)
+
+    valid_set = IceCube([51], batch_size=1024)
+    valid_loader = DataLoader(valid_set, batch_size=1, collate_fn=collate_fn)
 
     model = DynEdge(num_total_step=num_total_step, num_warmup_step=num_warmup_step)
     trainer = pl.Trainer(
         default_root_dir=log_dir,
         accelerator='gpu',
         devices=1,
-        max_steps=num_total_step,
+        max_epochs=30,
         callbacks=[
             pl.callbacks.LearningRateMonitor(logging_interval='step'),
             pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
-            pl.callbacks.RichProgressBar()
+            pl.callbacks.RichProgressBar(),
+            pl.callbacks.EarlyStopping(monitor="loss/valid", mode="min", patience=5)
         ],
     )
-    trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader, valid_loader)
 
 if __name__ == '__main__':
     main()
