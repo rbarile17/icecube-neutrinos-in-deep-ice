@@ -131,7 +131,7 @@ class VonMisesFisher2DLoss(VonMisesFisherLoss):
         return self._evaluate(p, t)
     
 
-class VonMisesFisher3DLoss(nn.Module):
+class VonMisesFisher3DLoss(VonMisesFisherLoss):
     """General class for calculating von Mises-Fisher loss.
 
     Requires implementation for specific dimension `m` in which the target and
