@@ -47,7 +47,7 @@ class IceCube(IterableDataset):
         return offset, num_replica
 
 
-    def build_batch(self, data, meta, sensor_xyz, event_ids_batch):
+    def build_batch(self, data, meta, meta_angle, sensor_xyz, event_ids_batch):
         batch = []
 
         # For each sample, extract features
@@ -71,6 +71,7 @@ class IceCube(IterableDataset):
                 Data(
                     x=feat,
                     gt=meta[event_id],
+                    gt_angle=meta_angle[event_id],
                     n_pulses=len(feat),
                     eid=torch.tensor([event_id]).long(),
                 )
@@ -92,9 +93,15 @@ class IceCube(IterableDataset):
             data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{batch_id}.parquet')
             meta = pd.read_parquet(RAW_META_PATH/ f'meta_{batch_id}.parquet')
 
+            event_ids = meta['event_id'].tolist()
+            angles = torch.from_numpy(meta[['azimuth', 'zenith']].values).float()
             meta = dict(zip(
-                meta['event_id'].tolist(),
-                angle_to_xyz(torch.from_numpy(meta[['azimuth', 'zenith']].values).float())))
+                event_ids,
+                angle_to_xyz(angles)))
+            
+            meta_angle = dict(zip(
+                event_ids,
+                angles))
 
             # Take all event_ids and split them into batches
             event_ids = list(meta.keys())
@@ -106,7 +113,8 @@ class IceCube(IterableDataset):
             ]
 
             for event_ids_batch in event_ids:
-                batch = self.build_batch(data, meta, sensor_xyz, event_ids_batch)
+                batch = self \
+                    .build_batch(data, meta, meta_angle, sensor_xyz, event_ids_batch)
                 yield Batch.from_data_list(batch)
 
             del data
