@@ -11,7 +11,7 @@ from torch_geometric.data import Batch
 from torch_scatter import scatter_mean, scatter_max, scatter_min
 
 from ..utils import VonMisesFisher2DLoss
-from ..utils import angular_error, eps_like
+from ..utils import eps_like, angle_to_xyz, angular_error
 
 
 class MLP(nn.Sequential):
@@ -39,7 +39,7 @@ class DynEdge2DLoss(pl.LightningModule):
         self.conv3 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.post = MLP([1041, 336, 256])
         self.readout = MLP([768, 128])
-        self.pred = nn.Linear(128, 2)
+        self.pred = nn.Linear(128, 3)
 
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
@@ -101,30 +101,42 @@ class DynEdge2DLoss(pl.LightningModule):
             dim=1,
         )
         readout_out = self.readout(readout_inp)
-
-        # Predict
         pred = self.pred(readout_out)
-        kappa = torch.linalg.vector_norm(pred, dim=1) + eps_like(pred)
+
+        # Extract azimuth and kappa
+        kappa = torch.linalg.vector_norm(pred[:, :2], dim=1) + eps_like(pred)
         azimuth = torch.atan2(pred[:, 1], pred[:, 0])
         azimuth = torch.where(
             azimuth < 0, azimuth + 2 * np.pi, azimuth
         )
-        pred = torch.stack((azimuth, kappa), dim=1)
+        pred_azimuth_k = torch.stack((azimuth, kappa), dim=1)
 
-        return pred
+        # Extract zenith and kappa
+        zenith = torch.sigmoid(pred[:, 2]) * np.pi
+        kappa = torch.abs(pred[:, 2]) + eps_like(pred[:, 2])
+        pred_zenith_k = torch.stack((zenith, kappa), dim=1)
+
+        return pred_azimuth_k, pred_zenith_k
     
 
     def train_or_valid_step(self, data, prefix, log=True):
         """Training and validation step."""
-        pred_azimuth_k = self.forward(data)  # [B, 2]
-        true_azimuth = data.gt_angle.view(-1, 1)  # [B, 1]
-        loss = VonMisesFisher2DLoss()(pred_azimuth_k, true_azimuth)
+        pred_azimuth_k, pred_zenith_k = self.forward(data)  # [B, 2]
+        true_angles = data.gt_angle.view(-1, 2)  # [B, 2]
+        true_azimuth, true_zenith = true_angles[:, 0].unsqueeze(dim=1), true_angles[:, 1].unsqueeze(dim=1)
+        loss_azimuth = VonMisesFisher2DLoss()(pred_azimuth_k, true_azimuth).mean()
+        loss_zenith = VonMisesFisher2DLoss()(pred_zenith_k, true_zenith).mean()
 
-        # error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
+        pred_xyz = angle_to_xyz(torch.stack([pred_azimuth_k[:, 0], pred_zenith_k[:, 0]], dim=1))
+        true_xyz = data.gt.view(-1, 3)
+        euclidean_loss = nn.MSELoss()(pred_xyz, true_xyz)
+
+        loss = loss_azimuth + loss_zenith + euclidean_loss
+        error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:
-            self.log(f'loss/{prefix}', loss, batch_size=len(true_azimuth))
-            # self.log(f'error/{prefix}', error, batch_size=len(true_azimuth))
+            self.log(f'loss/{prefix}', loss, batch_size=len(true_angles))
+            self.log(f'error/{prefix}', error, batch_size=len(true_azimuth))
         return loss
 
     def training_step(self, data, _, log=True):
