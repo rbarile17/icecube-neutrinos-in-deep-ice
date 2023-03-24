@@ -7,8 +7,7 @@ import pytorch_lightning as pl
 
 from torch.utils.data import DataLoader
 
-from .dynedge import collate_fn
-from .dynedge_2dloss import DynEdge2DLoss
+from .dynedge import DynEdge3DLoss, DynEdge2DLoss
 from ..data import IceCube
 
 
@@ -30,10 +29,10 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
 
     train_set = IceCube(list(range(1, 51)), batch_size=256, shuffle=True)
-    train_loader = DataLoader(train_set, batch_size=1, collate_fn=collate_fn)
+    train_loader = DataLoader(train_set, batch_size=1, collate_fn=lambda data: data[0])
 
     valid_set = IceCube([51], batch_size=1024)
-    valid_loader = DataLoader(valid_set, batch_size=1, collate_fn=collate_fn)
+    valid_loader = DataLoader(valid_set, batch_size=1, collate_fn=lambda data: data[0])
 
     model = DynEdge2DLoss(num_total_step=num_total_step, num_warmup_step=num_warmup_step)
     trainer = pl.Trainer(
