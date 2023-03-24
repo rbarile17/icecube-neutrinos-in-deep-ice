@@ -58,7 +58,7 @@ class VonMisesFisherLoss(nn.Module):
         return ret
 
     def _evaluate(self, prediction: Tensor, target: Tensor) -> Tensor:
-        """Calculate von Mises-Fisher loss for a vector in D dimensons.
+        """Calculate von Mises-Fisher loss for a vector in D dimensions.
 
         This loss utilises the von Mises-Fisher distribution, which is a
         probability distribution on the (D - 1) sphere in D-dimensional space.
