@@ -186,7 +186,7 @@ class DynEdge3DLoss(DynEdge):
         return loss
 
 
-class DynEdge2DLoss(pl.LightningModule):
+class DynEdge2DLoss(DynEdge):
     """Implementation of DynEdge model."""
 
     # pylint: disable=unused-argument
