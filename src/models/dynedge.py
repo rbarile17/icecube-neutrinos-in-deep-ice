@@ -1,16 +1,21 @@
 """Implementation of DynEdge model."""
 
 import torch
-from torch import nn
+
+import numpy as np
 
 import pytorch_lightning as pl
+
+from abc import abstractmethod
+
+from torch import nn
 from torch_geometric.nn import knn_graph, EdgeConv
 from torch_geometric.utils import homophily
 from torch_geometric.data import Batch
 from torch_scatter import scatter_mean, scatter_max, scatter_min
 
-from ..utils import VonMisesFisher3DLoss
-from ..utils import angular_error
+from ..utils import VonMisesFisher3DLoss, VonMisesFisher2DLoss
+from ..utils import eps_like, angle_to_xyz, angular_error
 
 
 class MLP(nn.Sequential):
@@ -103,28 +108,15 @@ class DynEdge(pl.LightningModule):
 
         # Predict
         pred = self.pred(readout_out)
-        kappa = pred.norm(dim=1, p=2) + 1e-8
-
-        pred = torch.stack([
-            pred[:, 0] / kappa,
-            pred[:, 1] / kappa,
-            pred[:, 2] / kappa,
-            kappa
-        ], dim=1)
 
         return pred
 
+
+    @abstractmethod
     def train_or_valid_step(self, data, prefix, log=True):
         """Training and validation step."""
-        pred_xyzk = self.forward(data)  # [B, 4]
-        true_xyz = data.gt.view(-1, 3)  # [B, 3]
-        loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
-        error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
+        raise NotImplementedError
 
-        if log:
-            self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
-            self.log(f'error/{prefix}', error, batch_size=len(true_xyz))
-        return loss
 
     def training_step(self, data, _, log=True):
         return self.train_or_valid_step(data, 'train', log)
@@ -153,8 +145,96 @@ class DynEdge(pl.LightningModule):
                 'interval': 'step',
             },
         }
+    
+
+class DynEdge3DLoss(DynEdge):
+    """Implementation of DynEdge model."""
+
+    # pylint: disable=unused-argument
+    def __init__(
+        self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
+    ):
+        super().__init__(max_lr, min_lr, num_warmup_step, num_total_step)
+        self.pred = nn.Linear(128, 3)
+
+    # pylint: disable=arguments-differ
+    def forward(self, data: Batch):
+        """Forward pass of the model."""
+        pred = super().forward(data)
+        kappa = pred.norm(dim=1, p=2) + 1e-8
+
+        pred = torch.stack([
+            pred[:, 0] / kappa,
+            pred[:, 1] / kappa,
+            pred[:, 2] / kappa,
+            kappa
+        ], dim=1)
+
+        return pred
 
 
-def collate_fn(data):
-    """Collate function for PyTorch DataLoader."""
-    return data[0]
+    def train_or_valid_step(self, data, prefix, log=True):
+        """See base class."""
+        pred_xyzk = self.forward(data)  # [B, 4]
+        true_xyz = data.gt.view(-1, 3)  # [B, 3]
+        loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
+        error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
+
+        if log:
+            self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
+            self.log(f'error/{prefix}', error, batch_size=len(true_xyz))
+        return loss
+
+
+class DynEdge2DLoss(DynEdge):
+    """Implementation of DynEdge model."""
+
+    # pylint: disable=unused-argument
+    def __init__(
+        self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
+    ):
+        super().__init__(max_lr, min_lr, num_warmup_step, num_total_step)
+
+        self.pred = nn.Linear(128, 3)
+
+    # pylint: disable=arguments-differ
+    def forward(self, data: Batch):
+        """Forward pass of the model."""
+        pred = super().forward(data)
+
+        # Extract azimuth and kappa
+        kappa = torch.linalg.vector_norm(pred[:, :2], dim=1) + eps_like(pred)
+        azimuth = torch.atan2(pred[:, 1], pred[:, 0])
+        azimuth = torch.where(
+            azimuth < 0, azimuth + 2 * np.pi, azimuth
+        )
+        pred_azimuth_k = torch.stack((azimuth, kappa), dim=1)
+
+        # Extract zenith and kappa
+        zenith = torch.sigmoid(pred[:, 2]) * np.pi
+        kappa = torch.abs(pred[:, 2]) + eps_like(pred[:, 2])
+        pred_zenith_k = torch.stack((zenith, kappa), dim=1)
+
+        return pred_azimuth_k, pred_zenith_k
+    
+
+    def train_or_valid_step(self, data, prefix, log=True):
+        """Training and validation step."""
+        pred_azimuth_k, pred_zenith_k = self.forward(data)  # [B, 2]
+        true_angles = data.gt_angle.view(-1, 2)  # [B, 2]
+        true_azimuth, true_zenith = true_angles[:, 0].unsqueeze(dim=1), true_angles[:, 1].unsqueeze(dim=1)
+        loss_azimuth = VonMisesFisher2DLoss()(pred_azimuth_k, true_azimuth).mean()
+        loss_zenith = VonMisesFisher2DLoss()(pred_zenith_k, true_zenith).mean()
+
+        pred_xyz = angle_to_xyz(torch.stack([pred_azimuth_k[:, 0], pred_zenith_k[:, 0]], dim=1))
+        true_xyz = data.gt.view(-1, 3)
+        euclidean_loss = nn.MSELoss()(pred_xyz, true_xyz)
+
+        loss = loss_azimuth + loss_zenith + euclidean_loss
+        error = angular_error(pred_xyz, true_xyz).mean()
+
+        if log:
+            self.log(f'loss/{prefix}', loss, batch_size=len(true_angles))
+            self.log(f'error/{prefix}', error, batch_size=len(true_azimuth))
+        return loss
+
