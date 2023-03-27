@@ -1,8 +1,6 @@
 import pytest
 import torch
 
-from torch_geometric.data import Data, Batch
-
 from src.models import DynEdge
 from src.data import IceCube
 
