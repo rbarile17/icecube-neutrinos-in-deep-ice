@@ -46,6 +46,40 @@ class IceCube(IterableDataset):
 
         return offset, num_replica
 
+
+    def build_batch(self, data, meta, meta_angle, sensor_xyz, event_ids_batch):
+        batch = []
+
+        # For each sample, extract features
+        for event_id in event_ids_batch:
+            event_df = data.loc[event_id]
+
+            if len(event_df) > self.max_pulses:
+                event_df = event_df.sample(n=self.max_pulses)
+
+            event_df = event_df.sort_values(['time'])
+            sensor = torch.from_numpy(event_df['sensor_id'].values).long()
+            feat = torch.stack([
+                sensor_xyz[sensor][:, 0],
+                sensor_xyz[sensor][:, 1],
+                sensor_xyz[sensor][:, 2],
+                torch.from_numpy(event_df['time'].values).float(),
+                torch.from_numpy(event_df['charge'].values).float(),
+                torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
+
+            batch.append(
+                Data(
+                    x=feat,
+                    gt=meta[event_id],
+                    gt_angle=meta_angle[event_id],
+                    n_pulses=len(feat),
+                    eid=torch.tensor([event_id]).long(),
+                )
+            )
+
+        return batch
+            
+
     def __iter__(self):
         offset, num_replica = self.handle_distributed()
         batch_ids = self.batch_ids[offset::num_replica]
@@ -59,9 +93,15 @@ class IceCube(IterableDataset):
             data = pd.read_parquet(RAW_TRAIN_BATCHES_PATH / f'batch_{batch_id}.parquet')
             meta = pd.read_parquet(RAW_META_PATH/ f'meta_{batch_id}.parquet')
 
+            event_ids = meta['event_id'].tolist()
+            angles = torch.from_numpy(meta[['azimuth', 'zenith']].values).float()
             meta = dict(zip(
-                meta['event_id'].tolist(),
-                angle_to_xyz(torch.from_numpy(meta[['azimuth', 'zenith']].values).float())))
+                event_ids,
+                angle_to_xyz(angles)))
+            
+            meta_angle = dict(zip(
+                event_ids,
+                angles))
 
             # Take all event_ids and split them into batches
             event_ids = list(meta.keys())
@@ -73,34 +113,8 @@ class IceCube(IterableDataset):
             ]
 
             for event_ids_batch in event_ids:
-                batch = []
-
-                # For each sample, extract features
-                for event_id in event_ids_batch:
-                    event_df = data.loc[event_id]
-
-                    if len(event_df) > self.max_pulses:
-                        event_df = event_df.sample(n=self.max_pulses)
-
-                    event_df = event_df.sort_values(['time'])
-                    sensor = torch.from_numpy(event_df['sensor_id'].values).long()
-                    feat = torch.stack([
-                        sensor_xyz[sensor][:, 0],
-                        sensor_xyz[sensor][:, 1],
-                        sensor_xyz[sensor][:, 2],
-                        torch.from_numpy(event_df['time'].values).float(),
-                        torch.from_numpy(event_df['charge'].values).float(),
-                        torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
-
-                    batch.append(
-                        Data(
-                            x=feat,
-                            gt=meta[event_id],
-                            n_pulses=len(feat),
-                            eid=torch.tensor([event_id]).long(),
-                        )
-                    )
-
+                batch = self \
+                    .build_batch(data, meta, meta_angle, sensor_xyz, event_ids_batch)
                 yield Batch.from_data_list(batch)
 
             del data
