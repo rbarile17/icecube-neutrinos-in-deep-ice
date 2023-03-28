@@ -73,7 +73,7 @@ class IceCube(IterableDataset):
                     gt=meta[event_id],
                     gt_angle=meta_angle[event_id],
                     n_pulses=len(feat),
-                    eid=torch.tensor([event_id]).long(),
+                    event_id=torch.tensor([event_id]).long(),
                 )
             )
 
@@ -98,7 +98,6 @@ class IceCube(IterableDataset):
             meta = dict(zip(
                 event_ids,
                 angle_to_xyz(angles)))
-            
             meta_angle = dict(zip(
                 event_ids,
                 angles))
