@@ -14,7 +14,8 @@ from torch_geometric.utils import homophily
 from torch_geometric.data import Batch
 from torch_scatter import scatter_mean, scatter_max, scatter_min
 
-from ..utils import VonMisesFisher3DLoss, VonMisesFisher2DLoss
+from ..utils import VonMisesFisher2DLoss
+from ..utils import vmf_3d_loss
 from ..utils import eps_like, angle_to_xyz, angular_error
 
 
@@ -156,27 +157,15 @@ class DynEdge3DLoss(DynEdge):
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
         """Forward pass of the model."""
-        readout_out = super().forward(data)
-
-        pred = self.pred(readout_out)
-        kappa = pred.norm(dim=1, p=2) + 1e-8
-
-        pred = torch.stack([
-            pred[:, 0] / kappa,
-            pred[:, 1] / kappa,
-            pred[:, 2] / kappa,
-            kappa
-        ], dim=1)
-
-        return pred
+        return self.pred(super().forward(data))
 
 
     def train_or_valid_step(self, data, prefix, log=True):
         """See base class."""
-        pred_xyzk = self.forward(data)  # [B, 4]
+        pred_xyz = self.forward(data)  # [B, 3]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
-        loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
-        error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
+        loss = vmf_3d_loss(pred_xyz, true_xyz)
+        error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:
             self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
