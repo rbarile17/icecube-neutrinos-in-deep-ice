@@ -103,15 +103,14 @@ class IceCube(IterableDataset):
                 angles))
 
             # Take all event_ids and split them into batches
-            event_ids = list(meta.keys())
             if self.shuffle:
                 random.shuffle(event_ids)
-            event_ids = [
+            event_ids_batches = [
                 event_ids[i : i + self.batch_size]
                 for i in range(0, len(event_ids), self.batch_size)
             ]
 
-            for event_ids_batch in event_ids:
+            for event_ids_batch in event_ids_batches:
                 batch = self \
                     .build_batch(data, meta, meta_angle, sensor_xyz, event_ids_batch)
                 yield Batch.from_data_list(batch)
