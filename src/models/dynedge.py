@@ -39,13 +39,13 @@ class DynEdge(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.lstm = nn.LSTM(6, 32, 4)
+        self.lstm = nn.LSTM(6, 256, 4)
 
         self.conv0 = EdgeConv(MLP([34, 128, 256]), aggr='add')
         self.conv1 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv2 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv3 = EdgeConv(MLP([512, 336, 256]), aggr='add')
-        self.post = MLP([1041, 336, 256])
+        self.post = MLP([1297, 336, 256])
         self.readout = MLP([768, 128])
 
     # pylint: disable=arguments-differ
@@ -98,6 +98,7 @@ class DynEdge(pl.LightningModule):
 
         # Postprocessing
         post_inp = torch.cat(feats, dim=1)
+        post_inp = torch.cat([post_inp, lstm_out], dim=1)
         post_out = self.post(post_inp)
 
         # Readout
