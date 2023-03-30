@@ -14,7 +14,8 @@ from torch_geometric.utils import homophily
 from torch_geometric.data import Batch
 from torch_scatter import scatter_mean, scatter_max, scatter_min
 
-from ..utils import VonMisesFisher3DLoss, VonMisesFisher2DLoss
+from ..utils import VonMisesFisher2DLoss
+from ..utils import vmf_3d_loss
 from ..utils import eps_like, angle_to_xyz, angular_error
 
 
@@ -46,7 +47,6 @@ class DynEdge(pl.LightningModule):
         self.conv3 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.post = MLP([1041, 336, 256])
         self.readout = MLP([768, 128])
-        self.pred = nn.Linear(128, 3)
 
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
@@ -111,10 +111,7 @@ class DynEdge(pl.LightningModule):
         )
         readout_out = self.readout(readout_inp)
 
-        # Predict
-        pred = self.pred(readout_out)
-
-        return pred
+        return readout_out
 
 
     @abstractmethod
@@ -165,25 +162,15 @@ class DynEdge3DLoss(DynEdge):
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
         """Forward pass of the model."""
-        pred = super().forward(data)
-        kappa = pred.norm(dim=1, p=2) + 1e-8
-
-        pred = torch.stack([
-            pred[:, 0] / kappa,
-            pred[:, 1] / kappa,
-            pred[:, 2] / kappa,
-            kappa
-        ], dim=1)
-
-        return pred
+        return self.pred(super().forward(data))
 
 
     def train_or_valid_step(self, data, prefix, log=True):
         """See base class."""
-        pred_xyzk = self.forward(data)  # [B, 4]
+        pred_xyz = self.forward(data)  # [B, 3]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
-        loss = VonMisesFisher3DLoss()(pred_xyzk, true_xyz).mean()
-        error = angular_error(pred_xyzk[:, :3], true_xyz).mean()
+        loss = vmf_3d_loss(pred_xyz, true_xyz)
+        error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:
             self.log(f'loss/{prefix}', loss, batch_size=len(true_xyz))
@@ -199,25 +186,27 @@ class DynEdge2DLoss(DynEdge):
         self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
     ):
         super().__init__(max_lr, min_lr, num_warmup_step, num_total_step)
+        self.pred_azimuth_layer = nn.Linear(128, 2)
+        self.pred_zenith_layer = nn.Linear(128, 2)
 
-        self.pred = nn.Linear(128, 3)
 
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
         """Forward pass of the model."""
-        pred = super().forward(data)
+        readout_out = super().forward(data)
 
-        # Extract azimuth and kappa
-        kappa = torch.linalg.vector_norm(pred[:, :2], dim=1) + eps_like(pred)
-        azimuth = torch.atan2(pred[:, 1], pred[:, 0])
+        pred_azimuth = self.pred_azimuth_layer(readout_out)
+        kappa = torch.linalg.vector_norm(pred_azimuth, dim=1) + eps_like(pred_azimuth)
+        azimuth = torch.atan2(pred_azimuth[:, 1], pred_azimuth[:, 0])
         azimuth = torch.where(
             azimuth < 0, azimuth + 2 * np.pi, azimuth
         )
         pred_azimuth_k = torch.stack((azimuth, kappa), dim=1)
 
-        # Extract zenith and kappa
-        zenith = torch.sigmoid(pred[:, 2]) * np.pi
-        kappa = torch.abs(pred[:, 2]) + eps_like(pred[:, 2])
+        pred_zenith = self.pred_zenith_layer(readout_out)
+        zenith = torch.sigmoid(pred_zenith[:, 0]) * np.pi
+        kappa = torch.abs(pred_zenith[:, 1]) + eps_like(pred_zenith)
+
         pred_zenith_k = torch.stack((zenith, kappa), dim=1)
 
         return pred_azimuth_k, pred_zenith_k
@@ -233,9 +222,8 @@ class DynEdge2DLoss(DynEdge):
 
         pred_xyz = angle_to_xyz(torch.stack([pred_azimuth_k[:, 0], pred_zenith_k[:, 0]], dim=1))
         true_xyz = data.gt.view(-1, 3)
-        euclidean_loss = nn.MSELoss()(pred_xyz, true_xyz)
 
-        loss = loss_azimuth + loss_zenith + euclidean_loss
+        loss = loss_azimuth + loss_zenith
         error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:

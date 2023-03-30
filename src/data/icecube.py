@@ -48,16 +48,13 @@ class IceCube(IterableDataset):
 
 
     def build_batch(self, data, meta, meta_angle, sensor_xyz, event_ids_batch):
-        batch = []
-
-        # For each sample, extract features
-        for event_id in event_ids_batch:
+        def build_sample(event_id):
             event_df = data.loc[event_id]
 
             if len(event_df) > self.max_pulses:
                 event_df = event_df.sample(n=self.max_pulses)
 
-            event_df = event_df.sort_values(['time'])
+            # event_df = event_df.sort_values(['time'])
             sensor = torch.from_numpy(event_df['sensor_id'].values).long()
             feat = torch.stack([
                 sensor_xyz[sensor][:, 0],
@@ -67,17 +64,15 @@ class IceCube(IterableDataset):
                 torch.from_numpy(event_df['charge'].values).float(),
                 torch.from_numpy(event_df['auxiliary'].values).float()], dim=1)
 
-            batch.append(
-                Data(
-                    x=feat,
-                    gt=meta[event_id],
-                    gt_angle=meta_angle[event_id],
-                    n_pulses=len(feat),
-                    eid=torch.tensor([event_id]).long(),
-                )
+            return Data(
+                x=feat,
+                gt=meta[event_id],
+                gt_angle=meta_angle[event_id],
+                n_pulses=len(feat),
+                event_id=torch.tensor([event_id]).long(),
             )
 
-        return batch
+        return [build_sample(event_id) for event_id in event_ids_batch]
             
 
     def __iter__(self):
@@ -98,21 +93,19 @@ class IceCube(IterableDataset):
             meta = dict(zip(
                 event_ids,
                 angle_to_xyz(angles)))
-            
             meta_angle = dict(zip(
                 event_ids,
                 angles))
 
             # Take all event_ids and split them into batches
-            event_ids = list(meta.keys())
             if self.shuffle:
                 random.shuffle(event_ids)
-            event_ids = [
+            event_ids_batches = [
                 event_ids[i : i + self.batch_size]
                 for i in range(0, len(event_ids), self.batch_size)
             ]
 
-            for event_ids_batch in event_ids:
+            for event_ids_batch in event_ids_batches:
                 batch = self \
                     .build_batch(data, meta, meta_angle, sensor_xyz, event_ids_batch)
                 yield Batch.from_data_list(batch)
