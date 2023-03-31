@@ -14,8 +14,7 @@ from torch_geometric.utils import homophily
 from torch_geometric.data import Batch
 from torch_scatter import scatter_mean, scatter_max, scatter_min
 
-from ..utils import VonMisesFisher2DLoss
-from ..utils import vmf_3d_loss
+from ..utils import VonMisesFisher2DLoss, VonMisesFisher3DLoss
 from ..utils import eps_like, angle_to_xyz, angular_error
 
 
@@ -39,13 +38,13 @@ class DynEdge(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.lstm = nn.LSTM(6, 256, 4)
+        self.lstm = nn.LSTM(6, 32, 4, bidirectional=True)
 
         self.conv0 = EdgeConv(MLP([34, 128, 256]), aggr='add')
         self.conv1 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv2 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv3 = EdgeConv(MLP([512, 336, 256]), aggr='add')
-        self.post = MLP([1297, 336, 256])
+        self.post = MLP([1105, 336, 256])
         self.readout = MLP([768, 128])
 
     # pylint: disable=arguments-differ
@@ -163,14 +162,24 @@ class DynEdge3DLoss(DynEdge):
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
         """Forward pass of the model."""
-        return self.pred(super().forward(data))
+        readout_out = super().forward(data)
+    
+        pred = self.pred(readout_out)
+        kappa = pred.norm(dim=1, p=2) + 1e-8
+        pred_x = pred[:, 0] / kappa
+        pred_y = pred[:, 1] / kappa
+        pred_z = pred[:, 2] / kappa
+        pred = torch.stack([pred_x, pred_y, pred_z, kappa], dim=1)
+
+        return pred
 
 
     def train_or_valid_step(self, data, prefix, log=True):
         """See base class."""
-        pred_xyz = self.forward(data)  # [B, 3]
+        pred_xyz = self.forward(data)  # [B, 4]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
-        loss = vmf_3d_loss(pred_xyz, true_xyz)
+
+        loss = VonMisesFisher3DLoss(pred_xyz, true_xyz)
         error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:
