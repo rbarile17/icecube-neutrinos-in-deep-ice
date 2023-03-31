@@ -179,7 +179,7 @@ class DynEdge3DLoss(DynEdge):
         pred_xyz = self.forward(data)  # [B, 4]
         true_xyz = data.gt.view(-1, 3)  # [B, 3]
 
-        loss = VonMisesFisher3DLoss(pred_xyz, true_xyz)
+        loss = VonMisesFisher3DLoss()(pred_xyz, true_xyz)
         error = angular_error(pred_xyz, true_xyz).mean()
 
         if log:
