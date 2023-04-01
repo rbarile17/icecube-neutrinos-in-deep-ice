@@ -10,7 +10,13 @@ from torch.utils.data import DataLoader
 from .dynedge import DynEdge3DLoss, DynEdge2DLoss
 from ..data import IceCube
 
-NUM_EVENTS = 10_000_000
+# NUM_EVENTS = 10_000_000
+# MAX_EPOCHS = 30
+# TRAIN_BATCH_SIZE = 256
+# EVAL_BATCH_SIZE = 1_024
+# ACCUMULATE_GRAD_BATCHES = 4
+
+NUM_EVENTS = 200_000
 MAX_EPOCHS = 30
 TRAIN_BATCH_SIZE = 256
 EVAL_BATCH_SIZE = 1_024
@@ -33,13 +39,13 @@ def main():
     log_dir = Path('log') / Path(__file__).stem
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    train_set = IceCube(list(range(1, 51)), batch_size=TRAIN_BATCH_SIZE, shuffle=True)
+    train_set = IceCube([1], batch_size=TRAIN_BATCH_SIZE, shuffle=True)
     train_loader = DataLoader(train_set, batch_size=1, collate_fn=lambda data: data[0])
 
-    valid_set = IceCube([51], batch_size=EVAL_BATCH_SIZE)
+    valid_set = IceCube([2], batch_size=EVAL_BATCH_SIZE)
     valid_loader = DataLoader(valid_set, batch_size=1, collate_fn=lambda data: data[0])
 
-    model = DynEdge2DLoss(num_total_step=num_total_step, num_warmup_step=num_warmup_step)
+    model = DynEdge3DLoss(num_total_step=num_total_step, num_warmup_step=num_warmup_step)
     trainer = pl.Trainer(
         default_root_dir=log_dir,
         accelerator='gpu',
@@ -50,7 +56,7 @@ def main():
         callbacks=[
             pl.callbacks.LearningRateMonitor(logging_interval='step'),
             pl.callbacks.EarlyStopping(monitor="loss/valid", mode="min", patience=5),
-            pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
+            # pl.callbacks.ModelCheckpoint(log_dir, save_top_k=-1),
             pl.callbacks.RichProgressBar(),
         ],
     )
