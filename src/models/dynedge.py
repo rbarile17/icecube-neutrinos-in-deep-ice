@@ -34,24 +34,28 @@ class DynEdge(pl.LightningModule):
 
     # pylint: disable=unused-argument
     def __init__(
-        self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
+        self, 
+        max_lr=1e-3, min_lr=1e-5, 
+        num_warmup_step=1_000, num_total_step=20_000
     ):
         super().__init__()
         self.save_hyperparameters()
 
         self.lstm = nn.LSTM(
             input_size=17, 
-            hidden_size=32,
-            num_layers=1
+            hidden_size=128,
+            num_layers=4,
+            bidirectional=True,
         )
+        self.drop = nn.Dropout(p=0.5)
 
         self.conv0 = EdgeConv(MLP([34, 128, 256]), aggr='add')
         self.conv1 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv2 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.conv3 = EdgeConv(MLP([512, 336, 256]), aggr='add')
         self.post = MLP([1041, 336, 256])
-        self.readout_gnn = MLP([768, 128])
-        self.readout = MLP([160, 128])
+        self.readout_gnn = MLP([768, 256])
+        self.readout = MLP([512, 128])
 
     # pylint: disable=arguments-differ
     def forward(self, data: Batch):
@@ -86,7 +90,12 @@ class DynEdge(pl.LightningModule):
         vert_feat_lstm = pack_padded_sequence(vert_feat_lstm, counts.tolist(), batch_first=True, enforce_sorted=False)
 
         packed_output = self.lstm(vert_feat_lstm)[0]
-        lstm_out = torch.stack([event[-1] for event in torch.split(packed_output.data, counts.tolist(), dim=0)])
+        tuple_output = torch.split(packed_output.data, counts.tolist(), dim=0)
+
+        lstm_forward_out = torch.stack([event[-1][:128] for event in tuple_output])
+        lstm_reverse_out = torch.stack([event[0][128:] for event in tuple_output])
+        lstm_out = torch.cat((lstm_forward_out, lstm_reverse_out), 1)
+        lstm_out = self.drop(lstm_out)
 
         # Convolutions
         feats = [vert_feat]
@@ -148,7 +157,7 @@ class DynEdge(pl.LightningModule):
                 ),
                 torch.optim.lr_scheduler.CosineAnnealingLR(
                     optimizer, self.hparams.num_total_step, self.hparams.min_lr
-                ),
+                )
             ],
             milestones=[self.hparams.num_warmup_step],
         )
@@ -166,7 +175,9 @@ class DynEdge3DLoss(DynEdge):
 
     # pylint: disable=unused-argument
     def __init__(
-        self, max_lr=1e-3, min_lr=1e-5, num_warmup_step=1_000, num_total_step=20_000
+        self, 
+        max_lr=1e-3, min_lr=1e-5, 
+        num_warmup_step=1_000, num_total_step=20_000
     ):
         super().__init__(max_lr, min_lr, num_warmup_step, num_total_step)
         self.pred = nn.Linear(128, 3)

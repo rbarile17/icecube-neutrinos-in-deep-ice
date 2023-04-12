@@ -54,7 +54,7 @@ class IceCube(IterableDataset):
             if len(event_df) > self.max_pulses:
                 event_df = event_df.sample(n=self.max_pulses)
 
-            # event_df = event_df.sort_values(['time'])
+            event_df = event_df.sort_values(['time'])
             sensor = torch.from_numpy(event_df['sensor_id'].values).long()
             feat = torch.stack([
                 sensor_xyz[sensor][:, 0],
